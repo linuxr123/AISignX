@@ -115,7 +115,7 @@
   <div id="step1" class="step active">
     <label for="serverUrl">Server URL</label>
     <input type="url" id="serverUrl" placeholder="https://signage.example.com" autocomplete="off">
-    <p class="hint">The address of your digital signage server, including http/https.</p>
+    <p class="hint">HTTPS only — e.g. <code>https://signage.example.com</code> or <code>https://localhost</code> (with Caddy).</p>
     <button type="button" class="secondary" id="btnImportConfig">Browse for downloaded setup file…</button>
     <input type="file" id="fileImportConfig" accept="application/json,.json" style="display:none" />
     <div class="error" id="step1Error"></div>
@@ -169,11 +169,11 @@
     <pre id="errorModalText"></pre>
     <div class="tips">
       <b>Things to check:</b><br>
-      • URL must start with <b>http://</b> or <b>https://</b><br>
-      • Default server port is <b>5000</b> — e.g. <code>http://localhost:5000</code><br>
-      • Make sure the AISignX server is running (<code>python app.py</code>)<br>
-      • If connecting from another PC, replace <b>localhost</b> with the server's IP address<br>
-      • Check that your firewall allows connections on port 5000
+      • URL must start with <b>https://</b> (HTTP is not supported)<br>
+      • Use your public hostname or <code>https://localhost</code> with Caddy<br>
+      • Default HTTPS port is <b>443</b> (do not use :5000 — that is internal only)<br>
+      • Make sure Caddy and AISignX are running (see server docs/HTTPS_SETUP.md)<br>
+      • Check firewall allows port <b>443</b> (and 80 for Let's Encrypt)
     </div>
     <button class="modal-close" id="errorModalClose">Close</button>
   </div>
@@ -267,25 +267,29 @@ async function populateStep2Info() {
 document.getElementById('btnConnect').addEventListener('click', async () => {
   const btn = document.getElementById('btnConnect');
   const raw = document.getElementById('serverUrl').value.trim();
-  if (!raw) { showErrorModal('No URL entered.\n\nPlease type your server address, for example:\n  http://localhost:5000', 'Validating URL'); return; }
-  if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+  if (!raw) { showErrorModal('No URL entered.\n\nExample:\n  https://signage.example.com', 'Validating URL'); return; }
+  if (raw.toLowerCase().startsWith('http://')) {
     showErrorModal(
-      'URL must start with http:// or https://\n\nYou entered:\n  ' + raw + '\n\nTry:\n  http://' + raw,
+      'HTTP is not supported.\n\nUse https:// only.\n\nExample:\n  https://' + raw.replace(/^https?:\/\//i, ''),
       'Validating URL'
     );
     return;
   }
+  let connectUrl = raw;
+  if (!connectUrl.toLowerCase().startsWith('https://')) {
+    connectUrl = 'https://' + connectUrl.replace(/^\/+/, '');
+  }
   showError('step1Error', '');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Connecting…';
-  console.log('Connecting to:', raw);
+  console.log('Connecting to:', connectUrl);
   let res;
   try {
-    res = await window.signage.saveServerUrl(raw);
+    res = await window.signage.saveServerUrl(connectUrl);
   } catch (e) {
     btn.disabled = false;
     btn.textContent = 'Connect to Server';
-    showErrorModal('Unexpected error calling saveServerUrl:\n\n' + e.message, 'Connecting to ' + raw);
+    showErrorModal('Unexpected error calling saveServerUrl:\n\n' + e.message, 'Connecting to ' + connectUrl);
     return;
   }
   console.log('saveServerUrl result:', JSON.stringify(res));
@@ -298,7 +302,7 @@ document.getElementById('btnConnect').addEventListener('click', async () => {
     );
     return;
   }
-  serverUrl = raw.replace(/\/$/, '');
+  serverUrl = connectUrl.replace(/\/$/, '');
   await populateStep2Info();
   showStep(2);
 });

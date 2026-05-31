@@ -18,6 +18,7 @@ class SignageApp : Application() {
         const val KEY_TOKEN = "token"
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_UPDATE_MODE = "update_mode"
+        const val KEY_PLAYLIST_CACHE = "playlist_cache_json"
         const val UPDATE_MODE_AUTO = "auto"
         const val UPDATE_MODE_PROMPT = "prompt"
         const val UPDATE_MODE_MANUAL = "manual"

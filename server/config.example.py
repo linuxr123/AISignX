@@ -2,15 +2,14 @@
 # Never commit config.py — it may contain secrets.
 #
 # Easiest path: python generate_config.py --interactive
-# Quick switch: change AISIGNX_DEPLOY_MODE to 'http' or 'https' and restart.
+# AISignX is HTTPS-only for clients. TLS terminates at Caddy/nginx/IIS on 443.
+# The app listens on http://127.0.0.1:5000 behind the proxy (not exposed to clients).
 
 import os
 
 from deploy_modes import resolve_deploy_settings
 
-# 'http'  = direct HTTP on port 5000 (LAN / dev)
-# 'https' = TLS at nginx/Caddy/IIS; AISignX on http://127.0.0.1:5000
-AISIGNX_DEPLOY_MODE = os.environ.get('AISIGNX_DEPLOY_MODE', 'http')
+AISIGNX_DEPLOY_MODE = os.environ.get('AISIGNX_DEPLOY_MODE', 'https')
 
 _deploy = resolve_deploy_settings(
     AISIGNX_DEPLOY_MODE,

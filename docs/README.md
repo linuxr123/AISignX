@@ -31,6 +31,7 @@ Detailed guides live in [`server/docs/`](../server/docs/). Paths below are relat
 | Document | Description |
 |----------|-------------|
 | [GETTING_STARTED.md](../server/docs/GETTING_STARTED.md) | Install, config wizard, database, first display |
+| [HTTPS_SETUP.md](../server/docs/HTTPS_SETUP.md) | **Default HTTPS** — Caddy, free Let's Encrypt, localhost TLS |
 | [SERVER_HTTP_ONLY_or_HTTPS_ONLY_Version2.md](../server/docs/SERVER_HTTP_ONLY_or_HTTPS_ONLY_Version2.md) | HTTP direct vs HTTPS behind a proxy |
 | [PRODUCTION_DEPLOYMENT.md](../server/docs/PRODUCTION_DEPLOYMENT.md) | nginx, systemd, SSL, Gunicorn/Waitress |
 | [DEPLOY_WINDOWS.md](../server/docs/DEPLOY_WINDOWS.md) | Windows service, IIS/Caddy |

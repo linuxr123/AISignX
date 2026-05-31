@@ -112,14 +112,20 @@ class SetupActivity : AppCompatActivity() {
                 toast("Not an AISignX player config file")
                 return
             }
-            val server = obj.optString("server_url").trim().trimEnd('/')
+            val serverRaw = obj.optString("server_url").trim().trimEnd('/')
             val token = obj.optString("display_token").ifEmpty { obj.optString("token") }
             val enroll = obj.optString("enrollment_code").trim().replace("-", "").uppercase()
             val um = obj.optString("update_mode").trim().lowercase()
-            if (server.isEmpty()) {
+            if (serverRaw.isEmpty()) {
                 toast("Config missing server_url")
                 return
             }
+            val (valid, serverOrMsg) = normalizeServerUrl(serverRaw)
+            if (!valid) {
+                toast(serverOrMsg)
+                return
+            }
+            val server = serverOrMsg
             if (um == "auto" || um == "automatic") {
                 Config.updateMode = SignageApp.UPDATE_MODE_AUTO
             } else if (um == "manual") {
@@ -175,9 +181,26 @@ class SetupActivity : AppCompatActivity() {
         }
     }
 
+    private fun normalizeServerUrl(raw: String): Pair<Boolean, String> {
+        var url = raw.trim().trimEnd('/')
+        if (url.isEmpty()) return false to "Please enter a server URL"
+        if (url.startsWith("http://", ignoreCase = true)) {
+            return false to "HTTP is not supported. Use https://"
+        }
+        if (!url.startsWith("https://", ignoreCase = true)) {
+            url = "https://${url.trimStart('/')}"
+        }
+        return true to url
+    }
+
     private fun onConnectClicked() {
-        val url = b.etServerUrl.text.toString().trim().trimEnd('/')
-        if (url.isEmpty()) { toast("Please enter a server URL"); return }
+        val (valid, urlOrMsg) = normalizeServerUrl(b.etServerUrl.text.toString())
+        if (!valid) {
+            toast(urlOrMsg)
+            return
+        }
+        val url = urlOrMsg
+        b.etServerUrl.setText(url)
         setLoading(true, "Connecting…")
         lifecycleScope.launch(Dispatchers.IO) {
             val ok = ApiClient.ping(url)

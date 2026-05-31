@@ -111,10 +111,7 @@ python generate_config.py --interactive
 Non-interactive defaults:
 
 ```bash
-# Direct HTTP on port 5000 (default for install scripts)
-python generate_config.py --mode http
-
-# HTTPS behind nginx/Caddy/IIS
+# HTTPS (default for install scripts — use with setup_https.sh / Caddy)
 python generate_config.py --mode https --hostname signage.example.com
 
 # Cloudflare in front of nginx
@@ -139,8 +136,9 @@ Creates `config.py` with a random `SECRET_KEY`. Safe to re-run with `--force` on
 
 | Mode | When to use | Client URL example |
 |------|-------------|-------------------|
-| `http` | LAN, dev, no reverse proxy | `http://192.168.1.10:5000` |
-| `https` | nginx/Caddy/IIS terminates TLS on 443 | `https://signage.example.com` |
+| `https` | **Only supported mode** — Caddy/nginx/IIS on 443 | `https://signage.example.com` |
+
+See **[HTTPS_SETUP.md](HTTPS_SETUP.md)** for Caddy, Let's Encrypt, and `localhost` TLS.
 
 One setting drives the rest (`TRUST_PROXY`, cookies, URL scheme). Edit `AISIGNX_DEPLOY_MODE` in `config.py` and restart, or re-run the wizard.
 

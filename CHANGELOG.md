@@ -13,6 +13,13 @@ when tagged releases begin.
 
 ## [Unreleased]
 
+### Server install & HTTPS
+- **HTTPS-only** — removed `http` deploy mode; install scripts, `generate_config.py`, client setup (Electron/Android), and downloaded setup files require `https://` URLs
+- **HTTPS is the default deploy mode** — `install_linux.sh` / `install_windows.ps1` and `generate_config.py` now create `https` config with a hostname (default `localhost` or machine name)
+- **Caddy setup scripts** — `server/scripts/setup_https.sh` and `setup_https.ps1` generate `deploy/Caddyfile` with automatic **Let's Encrypt** for public hostnames or **internal TLS** for localhost/LAN IP
+- **HTTPS_SETUP.md** — guide for free certificates, ports, and client URLs
+- Dev `python app.py` binds **127.0.0.1:5000** in https mode (use Caddy on 443 for clients)
+
 ### Admin UI
 - **Top navigation bar** — replaced the fixed sidebar with a horizontal navbar and dropdowns (Signage, Admin, System, user menu); active tenant selector moved to the top bar
 - **Tenant-aware dashboard** — overview cards, online/offline summary, storage bar, pending enrollments, schedule conflicts, recent displays, audit snippets, and quick actions scoped to the active tenant
@@ -26,9 +33,12 @@ when tagged releases begin.
 - **Upload limits** — raised max upload size and JSON 413 responses for large zip imports (`config.example.py`, `app.py`)
 
 ### Clients
+- **HTTPS-only client setup** (`Electron` **1.0.22**, `Android` **1.4.16** / `versionCode` 29) — Electron and Android reject `http://` server URLs; setup UI and imported configs require `https://`
 - **Electron app version** — `window.AISIGNX_APP_VERSION` exposed via preload so the displays page reports the real installer version instead of `browser` (Android already reported version on register; pings now stay in sync)
 - **Android TV / Shield** (`1.4.14`, `versionCode` 27) — native intercept of D-pad and media keys before WebView; PIN keypad via Menu, OK (short/long press), and number keys; media skip blocked while kiosk is locked; larger PIN buttons and on-screen remote hint
-- **Player JS** (`display_player.js`) — keyboard shortcuts respect lock state; `AISignXTvKey` bridge for Android remotes; `ensureReportedAppVersion()` for Electron pings
+- **Android offline playback** (`1.4.15`–`1.4.16`) — parallel video prefetch, plugin HTML and `/plugin_assets/` warming, cached playlist API, larger WebView cache; player waits for full media download before offline video play and surfaces cache errors instead of a black screen
+- **Offline playback reliability** — browser cache-warning when service workers cannot run; playlists kept when signed URLs expire; Android retries cached player page instead of offline shell; complete-only media cache; deferred image/video load while offline on Android
+- **Player JS** (`display_player.js` v31) — keyboard shortcuts respect lock state; `AISignXTvKey` bridge for Android remotes; `ensureReportedAppVersion()` for Electron pings; Android prefetch/cache bridge (`isMediaCached`, `requestMediaPrefetch`)
 
 ### Documentation & repository
 - Root documentation index at [`docs/README.md`](docs/README.md)

@@ -44,22 +44,27 @@ app.config.from_pyfile(config_path)
 # Read proxy settings from config
 trust_proxy = bool(app.config.get('TRUST_PROXY', False))
 proxy_hops = int(app.config.get('TRUST_PROXY_HOPS', 1))  # new: allow overriding hop count
-preferred_scheme = (app.config.get('PREFERRED_URL_SCHEME') or 'http').lower()
+preferred_scheme = (app.config.get('PREFERRED_URL_SCHEME') or 'https').lower()
+if preferred_scheme != 'https':
+    preferred_scheme = 'https'
+    app.config['PREFERRED_URL_SCHEME'] = 'https'
+deploy_mode = app.config.get('AISIGNX_DEPLOY_MODE') or 'https'
+if deploy_mode == 'http':
+    deploy_mode = 'https'
+    app.config['AISIGNX_DEPLOY_MODE'] = 'https'
+    logger.warning('AISIGNX_DEPLOY_MODE=http is no longer supported; using https.')
 
 if trust_proxy:
     # Trust proxy_hops reverse proxies (nginx=1; Cloudflare->nginx=2)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops, x_port=proxy_hops)
 
 app.config['PREFERRED_URL_SCHEME'] = preferred_scheme
-# Cookie Secure flags: only force-on if the user hasn't explicitly set them.
-# Setting them to False in config.py allows admins to log in over plain HTTP
-# (LAN URL) while still preferring HTTPS for absolute URL generation.
+# Cookie Secure flags for HTTPS sessions.
 if preferred_scheme == 'https':
     app.config.setdefault('SESSION_COOKIE_SECURE',  True)
     app.config.setdefault('REMEMBER_COOKIE_SECURE', True)
 
 logger.info(f"Proxy trusted: {trust_proxy} (hops={proxy_hops}) | Preferred scheme: {preferred_scheme}")
-deploy_mode = app.config.get('AISIGNX_DEPLOY_MODE') or ('https' if preferred_scheme == 'https' else 'http')
 logger.info(f"Deploy mode: {deploy_mode}")
 if app.config.get('SERVER_NAME'):
     logger.info(f"SERVER_NAME configured: {app.config['SERVER_NAME']}")
@@ -378,6 +383,10 @@ with app.app_context():
 if __name__ == '__main__':
     app.config['DEBUG'] = True
     app.config['TEMPLATES_AUTO_RELOAD'] = True
-    logger.info(f"Starting Digital Signage Server on http://0.0.0.0:5000")
+    # HTTPS mode: bind localhost only; use Caddy on :443 for clients (see docs/HTTPS_SETUP.md).
+    bind_host = '127.0.0.1' if deploy_mode == 'https' else '0.0.0.0'
+    logger.info(f"Starting Digital Signage Server on http://{bind_host}:5000 (deploy_mode={deploy_mode})")
+    if deploy_mode == 'https':
+        logger.info('Clients must use https:// via Caddy/reverse proxy — not http:// on port 5000')
     logger.info(f"Environment: {'Development' if app.config['DEBUG'] else 'Production'}")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host=bind_host, port=5000, debug=True)

@@ -56,13 +56,30 @@ pip install --upgrade pip --quiet
 pip install -r requirements.txt --quiet
 Write-OK "Dependencies installed."
 
-# --- 5. Generate config ---
-Write-Step "Server setup (HTTP vs HTTPS)..."
+# --- 5. Generate config (HTTPS default) ---
+Write-Step "Server setup (HTTPS default)..."
+$Hostname = $env:AISIGNX_HOSTNAME
+if (-not $Hostname) {
+    $Hostname = $env:COMPUTERNAME
+    if (-not $Hostname) { $Hostname = "localhost" }
+}
 if (Test-Path "config.py") {
     Write-OK "config.py already exists - skipping. Run: python generate_config.py --show"
 } else {
-    python generate_config.py --mode http
-    Write-OK "config.py created (direct HTTP mode). Run: python generate_config.py --interactive --force to change."
+    python generate_config.py --mode https --hostname $Hostname
+    Write-OK "config.py created (HTTPS mode, hostname=$Hostname)."
+}
+
+if ($env:AISIGNX_SKIP_HTTPS_SETUP -ne "1") {
+    Write-Step "HTTPS reverse proxy (Caddy)..."
+    $setupScript = Join-Path $PSScriptRoot "scripts\setup_https.ps1"
+    if (Test-Path $setupScript) {
+        try {
+            & $setupScript -Hostname $Hostname -NonInteractive
+        } catch {
+            Write-Host "[!] Caddy setup skipped or failed — run: .\scripts\setup_https.ps1 -Hostname $Hostname" -ForegroundColor Yellow
+        }
+    }
 }
 
 # --- 6. Run database migration ---
@@ -84,8 +101,10 @@ Write-Host "  To start the server:" -ForegroundColor White
 Write-Host "    .venv\Scripts\Activate.ps1" -ForegroundColor Green
 Write-Host "    python app.py" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Then open your browser at:" -ForegroundColor White
-Write-Host "    http://localhost:5000" -ForegroundColor Green
+Write-Host "  Then start HTTPS (run PowerShell as Administrator for port 443):" -ForegroundColor White
+Write-Host "    caddy run --config deploy\Caddyfile" -ForegroundColor Green
+Write-Host "  Open admin UI:" -ForegroundColor White
+Write-Host "    https://$Hostname/" -ForegroundColor Green
 Write-Host ""
-Write-Host "  See docs\GETTING_STARTED.md in this server folder for next steps." -ForegroundColor Gray
+Write-Host "  See docs\HTTPS_SETUP.md and docs\GETTING_STARTED.md" -ForegroundColor Gray
 Write-Host ""

@@ -45,9 +45,8 @@ BUILTIN_DEFAULTS = {
     ),
     'server.public_url': (
         '', 'string', False,
-        'Public/LAN base URL clients should use to reach this AISignX server. '
-        'Set this to your DNS name (preferred) or LAN IP. Used in downloaded '
-        'client setup files so they do not contain localhost.',
+        'Public HTTPS base URL for clients (required): e.g. https://signage.example.com. '
+        'Used in downloaded player setup files. Must start with https:// — not http://:5000.',
     ),
 
     # --- timezone ------------------------------------------------------------

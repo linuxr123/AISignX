@@ -37,7 +37,8 @@ object WebCache {
 
 	private const val TAG = "AISignX/WebCache"
 	private const val CACHE_DIR_NAME = "web-cache"
-	private const val CACHE_SIZE_BYTES = 100L * 1024 * 1024   // 100 MB
+	private const val CACHE_SIZE_BYTES = 300L * 1024 * 1024   // 300 MB
+	private const val PREFETCH_CONCURRENCY = 3
 
 	private var client: OkHttpClient? = null
 	private var mediaDownloadClient: OkHttpClient? = null
@@ -114,7 +115,8 @@ object WebCache {
 		return path.startsWith("/plugin/")        ||
 			   path.startsWith("/plugin_assets/") ||
 			   path.startsWith("/static/")        ||
-			   path.startsWith("/display/")
+			   path.startsWith("/display/")       ||
+			   (path.startsWith("/api/display/") && path.endsWith("/playlist"))
 	}
 
 	/**
@@ -151,9 +153,16 @@ object WebCache {
 		if (rangeHeader != null && !path.startsWith("/uploads/")) return null
 
 		// Never cache live endpoints Ã¢â‚¬â€ these need real-time data.
-		if (path.endsWith("/events") ||
-			path.endsWith("/ping")   ||
-			path.startsWith("/api/")) {
+		if (path.endsWith("/events") || path.endsWith("/ping")) {
+			return null
+		}
+
+		// Playlist JSON — network-first with cache fallback (matches static/sw.js).
+		if (path.matches(Regex("^/api/display/[^/]+/playlist$"))) {
+			return networkFirst(ctx, urlStr)
+		}
+
+		if (path.startsWith("/api/")) {
 			return null
 		}
 
@@ -283,25 +292,31 @@ object WebCache {
 		val url = req.url.toString()
 		val rangeHeader = req.requestHeaders["Range"] ?: req.requestHeaders["range"]
 		val cacheFile   = mediaCacheFile(ctx, url)
-		val hasFullCache = cacheFile.exists() && cacheFile.length() > 0L
+		val hasFullCache = isMediaCacheComplete(ctx, url)
 
 		// Uncached media must always reach the server via native WebView
 		// networking. A flaky quickReachable() probe used to mark the server
 		// "offline" and return 503 here, which left <video> on a black frame
 		// mid-playback even when the server was up.
+		val online = quickReachable(ctx, url)
+
 		if (!hasFullCache) {
-			if (quickReachable(ctx, url)) {
+			if (online) {
 				ensureMediaPrefetch(url, cacheFile)
+				return null   // passthrough — WebView streams while prefetch runs
 			}
+			// Offline with no media-cache file — try OkHttp cache, then fail fast.
+			if (!seedMediaCacheFromOkHttp(ctx, url, cacheFile)) {
+				FileLog.w(TAG, "serveMedia OFFLINE-MISS (not cached) $url")
+				return errorResponse()
+			}
+			FileLog.i(TAG, "serveMedia seeded offline from OkHttp cache $url")
+		} else if (online) {
+			ensureMediaPrefetch(url, cacheFile)
 			return null
 		}
 
-		val online = quickReachable(ctx, url)
-		if (online) {
-			return null   // passthrough — prefer live streaming when reachable
-		}
-
-		// Offline path: serve the completed on-disk copy only.
+		// Offline: serve the completed on-disk copy (Range-aware).
 
 		val total = cacheFile.length()
 		val mimeSidecar = File(cacheFile.parentFile, cacheFile.name + ".mime")
@@ -437,6 +452,48 @@ object WebCache {
 	 * Warm media, plugin, and player-page caches from the playlist payload.
 	 * Called from the in-page player via AISignXNative.prefetchPlaylist().
 	 */
+	/** True when the full media file was committed (not a partial .part download). */
+	fun isMediaCacheComplete(ctx: Context, url: String): Boolean {
+		if (url.isBlank()) return false
+		val f = mediaCacheFile(ctx, url)
+		if (!f.exists() || f.length() <= 0L) return false
+		val part = File(f.parentFile, f.name + ".part")
+		if (part.exists()) return false
+		val lenSide = File(f.parentFile, f.name + ".len")
+		if (lenSide.exists()) {
+			try {
+				val expected = lenSide.readText(Charsets.UTF_8).trim().toLongOrNull() ?: return true
+				return f.length() == expected
+			} catch (_: Throwable) {
+				return true
+			}
+		}
+		return true
+	}
+
+	fun isMediaCached(ctx: Context, url: String): Boolean = isMediaCacheComplete(ctx, url)
+
+	/** Whether OkHttp disk cache has a successful GET for this exact URL. */
+	fun hasCachedResource(ctx: Context, url: String): Boolean {
+		if (url.isBlank()) return false
+		return try {
+			val resp = doRequest(ctx, url, onlyIfCached = true)
+			val ok = resp != null && resp.isSuccessful
+			resp?.close()
+			ok
+		} catch (_: Throwable) {
+			false
+		}
+	}
+
+	fun requestMediaPrefetch(url: String, ctx: Context) {
+		if (url.isBlank()) return
+		val dest = mediaCacheFile(ctx.applicationContext, url)
+		if (!dest.exists() || dest.length() <= 0L) {
+			ensureMediaPrefetch(url, dest)
+		}
+	}
+
 	fun prefetchPlaylist(
 		ctx: Context,
 		mediaUrls: List<String>,
@@ -444,19 +501,119 @@ object WebCache {
 		pageUrls: List<String>
 	) {
 		val appCtx = ctx.applicationContext
+		val videos = mutableListOf<String>()
+		val otherMedia = mutableListOf<String>()
 		for (url in mediaUrls) {
 			if (url.isBlank()) continue
-			val dest = mediaCacheFile(appCtx, url)
-			if (!dest.exists() || dest.length() <= 0L) {
-				ensureMediaPrefetch(url, dest)
+			val lower = url.lowercase()
+			if (lower.contains(".mp4") || lower.contains(".webm") || lower.contains(".mov") ||
+				lower.contains(".m4v") || lower.contains("/videos/")) {
+				videos.add(url)
+			} else {
+				otherMedia.add(url)
 			}
 		}
+		val orderedMedia = videos + otherMedia
 		Thread {
-			for (url in pluginUrls + pageUrls) {
+			prefetchMediaList(appCtx, orderedMedia)
+		}.start()
+		Thread {
+			for (url in pluginUrls) {
+				if (url.isBlank()) continue
+				prefetchPluginBundle(appCtx, url)
+			}
+			for (url in pageUrls) {
 				if (url.isBlank()) continue
 				try { doRequest(appCtx, url, onlyIfCached = false)?.close() } catch (_: Throwable) {}
 			}
 		}.start()
+	}
+
+	private fun prefetchMediaList(ctx: Context, urls: List<String>) {
+		if (urls.isEmpty()) return
+		val lock = Any()
+		var idx = 0
+		repeat(PREFETCH_CONCURRENCY.coerceAtMost(urls.size)) {
+			Thread {
+				while (true) {
+					val i = synchronized(lock) {
+						if (idx >= urls.size) -1 else idx++
+					}
+					if (i < 0) return@Thread
+					val url = urls[i]
+					val dest = mediaCacheFile(ctx, url)
+					if (!dest.exists() || dest.length() <= 0L) {
+						ensureMediaPrefetch(url, dest)
+					}
+				}
+			}.start()
+		}
+	}
+
+	/** Fetch plugin HTML and warm same-origin /plugin_assets/ + /static/ refs. */
+	private fun prefetchPluginBundle(ctx: Context, pluginUrl: String) {
+		try {
+			val resp = doRequest(ctx, pluginUrl, onlyIfCached = false) ?: return
+			if (!resp.isSuccessful) {
+				resp.close()
+				return
+			}
+			val html = resp.body?.string() ?: ""
+			resp.close()
+			val base = Config.serverUrl.trimEnd('/')
+			val urls = linkedSetOf(pluginUrl)
+			val re = Regex("""(?:src|href)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+			for (m in re.findAll(html)) {
+				var ref = m.groupValues[1].trim()
+				if (ref.isEmpty() || ref.startsWith("data:") || ref.startsWith("javascript:")) continue
+				val abs = when {
+					ref.startsWith("http://") || ref.startsWith("https://") -> ref
+					ref.startsWith("//") -> "https:$ref"
+					ref.startsWith("/") -> base + ref
+					else -> continue
+				}
+				if (abs.startsWith(base) &&
+					(abs.contains("/plugin_assets/") || abs.contains("/static/"))) {
+					urls.add(abs)
+				}
+			}
+			for (u in urls) {
+				try { doRequest(ctx, u, onlyIfCached = false)?.close() } catch (_: Throwable) {}
+			}
+			FileLog.i(TAG, "plugin-prefetch warmed ${urls.size} URL(s) for $pluginUrl")
+		} catch (e: Throwable) {
+			FileLog.w(TAG, "plugin-prefetch failed $pluginUrl: ${e.message}")
+		}
+	}
+
+	/** Copy a full cached HTTP body into media-cache for offline Range serving. */
+	private fun seedMediaCacheFromOkHttp(ctx: Context, url: String, dest: File): Boolean {
+		val resp = doRequest(ctx, url, onlyIfCached = true) ?: return false
+		if (!resp.isSuccessful) {
+			resp.close()
+			return false
+		}
+		return try {
+			val bytes = resp.body?.bytes() ?: ByteArray(0)
+			if (bytes.isEmpty()) return false
+			dest.parentFile?.mkdirs()
+			val tmp = File(dest.parentFile, dest.name + ".part")
+			tmp.writeBytes(bytes)
+			if (dest.exists()) dest.delete()
+			if (!tmp.renameTo(dest)) {
+				tmp.copyTo(dest, overwrite = true)
+				tmp.delete()
+			}
+			val ct = resp.header("Content-Type")?.substringBefore(';')?.trim()
+			if (!ct.isNullOrEmpty()) {
+				File(dest.parentFile, dest.name + ".mime").writeText(ct, Charsets.UTF_8)
+			}
+		 true
+		} catch (_: Throwable) {
+			false
+		} finally {
+			resp.close()
+		}
 	}
 
 	private fun guessMimeFromUrl(url: String): String {
@@ -546,6 +703,10 @@ object WebCache {
 								if (!ct.isNullOrEmpty()) {
 									val side = File(dest.parentFile, dest.name + ".mime")
 									side.writeText(ct, Charsets.UTF_8)
+								}
+								if (expected > 0L) {
+									val lenSide = File(dest.parentFile, dest.name + ".len")
+									lenSide.writeText(expected.toString(), Charsets.UTF_8)
 								}
 							} catch (_: Throwable) {}
 							FileLog.i(TAG, "media-prefetch OK ${dest.length()} bytes $url")

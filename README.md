@@ -122,7 +122,7 @@ Full catalog with roadmap markers: **[FEATURES.md](server/docs/FEATURES.md)**
 | | |
 |:---:|:---:|
 | **Brand** | **Admin UI** *(add your own screenshots to `docs/images/`)* |
-| ![AISignX logo](server/static/img/AISignX.png) | Run locally → open `http://localhost:5000` after [quick start](#one-minute-quick-start) |
+| ![AISignX logo](server/static/img/AISignX.png) | Run locally → open `https://localhost/` after [quick start](#one-minute-quick-start) (Caddy HTTPS) |
 
 We welcome PRs that add redacted screenshots (`docs/images/dashboard.png`, `playlist-editor.png`, etc.). See [docs/images/README.md](docs/images/README.md).
 
@@ -160,12 +160,20 @@ python app.py
 </td></tr>
 </table>
 
-Open **http://localhost:5000** → `admin` / `Admin123!` → **change the password immediately**.
+Install configures **HTTPS by default**. Start Caddy, then open the admin UI:
+
+```bash
+# After install (Linux example)
+cd server
+sudo caddy run --config deploy/Caddyfile
+```
+
+Open **https://localhost/** (or your hostname) → `admin` / `Admin123!` → **change the password immediately**.
 
 | Next | Link |
 |------|------|
+| HTTPS & free certificates | [server/docs/HTTPS_SETUP.md](server/docs/HTTPS_SETUP.md) |
 | Detailed install | [GETTING_STARTED.md](server/docs/GETTING_STARTED.md) |
-| HTTP vs HTTPS | `cd server` → `python generate_config.py --interactive` |
 | All docs | [docs/README.md](docs/README.md) |
 
 ---

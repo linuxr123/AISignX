@@ -1,26 +1,14 @@
-"""HTTP vs HTTPS deployment presets for AISignX server config."""
+"""HTTPS deployment presets for AISignX server config."""
 
 from __future__ import annotations
 
 MODES: dict[str, dict] = {
-    'http': {
-        'label': 'Direct HTTP (LAN / development)',
-        'description': (
-            'Run AISignX on plain HTTP (e.g. port 5000). '
-            'No reverse proxy required.'
-        ),
-        'trust_proxy': False,
-        'proxy_hops': 1,
-        'preferred_url_scheme': 'http',
-        'session_cookie_secure': False,
-        'remember_cookie_secure': False,
-        'client_url_template': 'http://{host}:5000',
-    },
     'https': {
-        'label': 'HTTPS via reverse proxy (nginx / Caddy / IIS)',
+        'label': 'HTTPS (Caddy / nginx / IIS on 443)',
         'description': (
-            'Terminate TLS at nginx, Caddy, or IIS. AISignX stays on '
-            'http://127.0.0.1:5000 behind the proxy.'
+            'Terminate TLS at Caddy, nginx, or IIS. AISignX listens on '
+            'http://127.0.0.1:5000 behind the proxy. Browser clients require '
+            'this mode for offline caching.'
         ),
         'trust_proxy': True,
         'proxy_hops': 1,
@@ -33,10 +21,13 @@ MODES: dict[str, dict] = {
 
 
 def normalize_mode(mode: str | None) -> str:
-    value = (mode or 'http').strip().lower()
+    value = (mode or 'https').strip().lower()
+    if value == 'http':
+        # Legacy configs — AISignX is HTTPS-only for clients
+        value = 'https'
     if value not in MODES:
         allowed = ', '.join(sorted(MODES))
-        raise ValueError(f"Unknown deploy mode {value!r}. Use one of: {allowed}")
+        raise ValueError(f"Unknown deploy mode {mode!r}. Use one of: {allowed}")
     return value
 
 
@@ -46,7 +37,7 @@ def resolve_deploy_settings(
     proxy_hops: int | None = None,
     server_name: str | None = None,
 ) -> dict:
-    """Return config.py-ready settings for the chosen deployment mode."""
+    """Return config.py-ready settings for HTTPS deployment."""
     key = normalize_mode(mode)
     preset = MODES[key]
     hops = int(proxy_hops if proxy_hops is not None else preset['proxy_hops'])

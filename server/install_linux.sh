@@ -56,13 +56,32 @@ pip install --upgrade pip --quiet
 pip install -r requirements.txt --quiet
 ok "Dependencies installed."
 
-# --- 6. Generate config ---
-step "Server setup (HTTP vs HTTPS)..."
+# --- 6. Generate config (HTTPS default) ---
+step "Server setup (HTTPS default)..."
+HOSTNAME="${AISIGNX_HOSTNAME:-}"
+if [ -z "$HOSTNAME" ]; then
+    HOSTNAME="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)"
+    if [[ "$HOSTNAME" == *.* ]]; then
+        HOSTNAME="${HOSTNAME%%.*}"
+    fi
+    [ -z "$HOSTNAME" ] || [ "$HOSTNAME" = "(none)" ] && HOSTNAME="localhost"
+fi
 if [ -f "config.py" ]; then
     ok "config.py already exists - skipping. Run: python generate_config.py --show"
 else
-    python generate_config.py --mode http
-    ok "config.py created (direct HTTP mode). Run: python generate_config.py --interactive --force to change."
+    python generate_config.py --mode https --hostname "$HOSTNAME"
+    ok "config.py created (HTTPS mode, hostname=$HOSTNAME)."
+fi
+
+# --- 6b. Caddy / TLS (optional but recommended) ---
+if [ "${AISIGNX_SKIP_HTTPS_SETUP:-}" != "1" ]; then
+    step "HTTPS reverse proxy (Caddy)..."
+    chmod +x scripts/setup_https.sh 2>/dev/null || true
+    if [ -f "scripts/setup_https.sh" ]; then
+        AISIGNX_NONINTERACTIVE=1 AISIGNX_HOSTNAME="$HOSTNAME" AISIGNX_EMAIL="${AISIGNX_EMAIL:-}" \
+            ./scripts/setup_https.sh --hostname "$HOSTNAME" || \
+            echo -e "${YELLOW}[!] Caddy setup skipped or failed — run: ./scripts/setup_https.sh --hostname $HOSTNAME${NC}"
+    fi
 fi
 
 # --- 7. Run database migration ---
@@ -92,8 +111,11 @@ echo ""
 echo -e "  Or in one line:"
 echo -e "    ${GREEN}source .venv/bin/activate && python app.py${NC}"
 echo ""
-echo -e "  Then open your browser at:"
-echo -e "    ${GREEN}http://localhost:5000${NC}"
+echo -e "  Then start HTTPS (recommended — free Let's Encrypt on public DNS):"
+echo -e "    ${GREEN}sudo caddy run --config deploy/Caddyfile${NC}"
+echo -e "  Open admin UI:"
+echo -e "    ${GREEN}https://${HOSTNAME}/${NC}"
+echo -e "  (AISignX app stays on http://127.0.0.1:5000 behind Caddy.)"
 echo ""
-echo -e "  See docs/GETTING_STARTED.md for next steps."
+echo -e "  See docs/HTTPS_SETUP.md and docs/GETTING_STARTED.md"
 echo ""

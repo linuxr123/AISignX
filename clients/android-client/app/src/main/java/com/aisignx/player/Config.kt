@@ -35,6 +35,14 @@ object Config {
         set(v) = prefs.edit().putString(SignageApp.KEY_UPDATE_MODE, v).apply()
 
     fun clear() {
-        prefs.edit().remove(SignageApp.KEY_TOKEN).remove(SignageApp.KEY_SERVER_URL).apply()
+        prefs.edit()
+            .remove(SignageApp.KEY_TOKEN)
+            .remove(SignageApp.KEY_SERVER_URL)
+            .remove(SignageApp.KEY_PLAYLIST_CACHE)
+            .apply()
     }
+
+    var playlistCacheJson: String
+        get() = prefs.getString(SignageApp.KEY_PLAYLIST_CACHE, "") ?: ""
+        set(v) = prefs.edit().putString(SignageApp.KEY_PLAYLIST_CACHE, v).apply()
 }

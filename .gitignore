@@ -9,6 +9,8 @@
 !.env.example
 server/.env
 server/config.py
+server/deploy/Caddyfile
+server/.caddy/
 **/keystore.properties
 *.keystore
 **/keystorepass.txt

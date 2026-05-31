@@ -127,8 +127,7 @@ class PlayerActivity : AppCompatActivity() {
                 // whole player.
                 if (!req.isForMainFrame) return
                 FileLog.w(TAG, "main-frame load failed: ${err.errorCode} ${err.description}")
-                showOfflinePage()
-                scheduleOfflineRetry()
+                handleMainFrameLoadFailure()
             }
 
             override fun onReceivedHttpError(
@@ -150,6 +149,7 @@ class PlayerActivity : AppCompatActivity() {
                 // running. If the real player URL just loaded, cancel it.
                 if (url.startsWith("file:///android_asset/offline.html")) return
                 _playerPageLoaded = true
+                _mainFrameLoadAttempts = 0
                 cancelOfflineRetry()
                 _showingOffline = false
                 WebCache.markServerReachable(Config.serverUrl)
@@ -522,10 +522,36 @@ class PlayerActivity : AppCompatActivity() {
         b.webView.postDelayed({
             if (!_playerPageLoaded && !_showingOffline) {
                 FileLog.w(TAG, "player page load timeout: $url")
-                showOfflinePage()
-                scheduleOfflineRetry()
+                handleMainFrameLoadFailure()
             }
         }, 25_000L)
+    }
+
+    private var _mainFrameLoadAttempts = 0
+
+    /**
+     * Prefer staying on (or retrying) the real player URL when we have a cached
+     * display page or a persisted playlist. Only fall back to packaged offline.html
+     * when there is nothing local to play.
+     */
+    private fun handleMainFrameLoadFailure() {
+        val playerUrl = _lastPlayerUrl ?: return
+        val hasPageCache = WebCache.hasCachedResource(this, playerUrl)
+        val hasPlaylist = Config.playlistCacheJson.isNotBlank()
+        if (hasPageCache || hasPlaylist) {
+            if (_mainFrameLoadAttempts < 5) {
+                _mainFrameLoadAttempts++
+                FileLog.i(TAG, "retry player load (${_mainFrameLoadAttempts}/5) cache=$hasPageCache playlist=$hasPlaylist")
+                b.webView.loadUrl(playerUrl)
+                return
+            }
+        }
+        if (hasPageCache || hasPlaylist) {
+            scheduleOfflineRetry()
+            return
+        }
+        showOfflinePage()
+        scheduleOfflineRetry()
     }
 
     // ── Offline cold-start handling ──────────────────────────────────────────
@@ -780,6 +806,22 @@ class PlayerActivity : AppCompatActivity() {
         @android.webkit.JavascriptInterface
         fun unlockMinimize() {
             runOnUiThread { beginUnlockMinimize() }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun isMediaCached(url: String): Boolean {
+            return WebCache.isMediaCached(this@PlayerActivity, url)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun requestMediaPrefetch(url: String) {
+            WebCache.requestMediaPrefetch(url, this@PlayerActivity)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun persistPlaylistCache(json: String) {
+            if (json.isBlank()) return
+            Config.playlistCacheJson = json
         }
     }
 }

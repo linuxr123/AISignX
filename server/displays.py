@@ -62,35 +62,35 @@ def _lan_ip():
 
 
 def _client_setup_server_url():
-    """Base URL for downloaded native client setup files.
+    """Base URL for downloaded native client setup files (HTTPS only).
 
     Prefer explicit configuration/DNS. If the admin downloads from localhost,
     replace it with a LAN IP so Android/TV/other devices can reach the server.
     """
+    from https_urls import normalize_https_base_url
+
     try:
         import settings as _settings
         configured = (_settings.effective_value('server.public_url') or '').strip()
     except Exception:
         configured = ''
     if configured:
-        return configured.rstrip('/')
+        return normalize_https_base_url(configured)
 
     server_name = (current_app.config.get('SERVER_NAME') or '').strip()
     if server_name:
-        scheme = (current_app.config.get('PREFERRED_URL_SCHEME') or request.scheme or 'http').lower()
-        return f'{scheme}://{server_name}'.rstrip('/')
+        return normalize_https_base_url(f'https://{server_name}')
 
     base = (request.url_root or request.host_url or '').rstrip('/')
     parsed = urlparse(base)
     if parsed.scheme and parsed.netloc and not _is_localhost_name(parsed.hostname):
-        return base
+        return normalize_https_base_url(base)
 
     ip = _lan_ip()
-    if ip and parsed.scheme:
-        port = f':{parsed.port}' if parsed.port else ''
-        return f'{parsed.scheme}://{ip}{port}'.rstrip('/')
+    if ip:
+        return normalize_https_base_url(f'https://{ip}')
 
-    return base
+    return normalize_https_base_url(base or 'https://localhost')
 
 
 def _check_single_client(display, client_ip):

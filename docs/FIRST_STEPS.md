@@ -23,7 +23,7 @@ There is **no bundled sample media** yet — upload a few files or use a public 
 
 ### 1. Secure the server
 
-1. Log in at `http://localhost:5000` (or your HTTPS URL).
+1. Log in at `https://localhost/` or your HTTPS URL (after Caddy setup).
 2. Open **Profile** → change the admin password.
 3. Optional: create additional users under **Users** with appropriate roles.
 
@@ -51,7 +51,7 @@ There is **no bundled sample media** yet — upload a few files or use a public 
 **Option B — Native client**
 
 1. Build or install Electron/Android from [clients/README.md](../clients/README.md).
-2. Enter server URL (`http://host:5000` or `https://your-host`).
+2. Enter server URL (`https://your-host` only — no HTTP, no port 5000).
 3. Complete enrollment; approve the display in **Displays** if pending.
 
 ### 5. Assign content

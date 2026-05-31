@@ -24,7 +24,7 @@
     const SSE_BASE    = 1_000;                  // SSE reconnect base delay ms
     const SSE_MAX     = 30_000;                 // SSE reconnect cap ms
     const CACHE_KEY   = `signage_playlist_${TOKEN}`;  // localStorage key
-    const JS_VERSION  = 'v30';                  // bump when display_player.js changes
+    const JS_VERSION  = 'v31';                  // bump when display_player.js changes
     const BLACK_VIDEO_POSTER = 'data:image/svg+xml;charset=utf-8,%3Csvg xmlns="http://www.w3.org/2000/svg" width="16" height="9" viewBox="0 0 16 9"%3E%3Crect width="16" height="9" fill="%23000"/%3E%3C/svg%3E';
     const CLIENT_ID   = getClientInstanceId();
     let SHOW_MEDIA_BUTTONS = !!window.SHOW_MEDIA_BUTTONS;
@@ -620,6 +620,72 @@
              typeof window.signage.runCommand === 'function');
     }
 
+    function isPlaybackOffline() {
+        return _serverOffline || _networkState !== 'online';
+    }
+
+    /** Stable cache identity for /uploads/ (path only — signed query may rotate). */
+    function mediaUploadStableKey(url) {
+        try {
+            const u = new URL(url, window.location.origin);
+            if (!u.pathname.startsWith('/uploads/')) return url;
+            return `${u.origin}${u.pathname}`;
+        } catch (_) {
+            return url;
+        }
+    }
+
+    function offlineCacheUsesServiceWorker() {
+        return !isNativeShell() && !!(navigator.serviceWorker);
+    }
+
+    function offlineCacheLikelyActive() {
+        if (isNativeShell()) return true;
+        if (!window.isSecureContext) return false;
+        return !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+    }
+
+    function updateOfflineCacheWarning() {
+        const el = document.getElementById('cache-warning-banner');
+        if (!el) return;
+        if (isNativeShell()) {
+            el.style.display = 'none';
+            return;
+        }
+        if (!offlineCacheUsesServiceWorker()) {
+            el.style.display = 'flex';
+            el.dataset.state = 'no-sw-api';
+            const txt = document.getElementById('cache-warning-text');
+            if (txt) {
+                txt.textContent =
+                    'Offline media caching unavailable in this browser. Use HTTPS or the AISignX desktop/Electron player on LAN HTTP.';
+            }
+            return;
+        }
+        if (!window.isSecureContext) {
+            el.style.display = 'flex';
+            el.dataset.state = 'insecure';
+            const txt = document.getElementById('cache-warning-text');
+            if (txt) {
+                txt.textContent =
+                    'Offline caching disabled: open this display over HTTPS (or use Electron on plain HTTP). Signed-in LAN http:// URLs cannot register the service worker.';
+            }
+            return;
+        }
+        if (!navigator.serviceWorker.controller) {
+            el.style.display = 'flex';
+            el.dataset.state = 'sw-pending';
+            const txt = document.getElementById('cache-warning-text');
+            if (txt) {
+                txt.textContent =
+                    'Offline cache starting… stay on this page while online until media finishes prefetching. If this message persists, reload once while online.';
+            }
+            return;
+        }
+        el.style.display = 'none';
+        el.dataset.state = '';
+    }
+
     function resumePlayback() {
         try {
             document.querySelectorAll('video').forEach(v => {
@@ -660,6 +726,11 @@
         } catch (e) {
             // Storage quota exceeded or private mode — ignore
         }
+        try {
+            if (window.AISignXNative && window.AISignXNative.persistPlaylistCache) {
+                window.AISignXNative.persistPlaylistCache(JSON.stringify(data));
+            }
+        } catch (_) {}
     }
 
     function loadPlaylistCache() {
@@ -671,7 +742,8 @@
                 serverClockOffsetMs = row.clockOffsetMs;
             }
             const data = row.data || null;
-            if (data && playlistHasExpiredUrls(data)) return null;
+            // Keep playlist when signed URLs expired — media caches key by stable
+            // /uploads/ path (SW + Android WebCache). Refresh signatures when online.
             return data;
         } catch {
             return null;
@@ -768,10 +840,22 @@
         }
     }
 
+    function isVideoMediaUrl(url) {
+        const u = String(url || '').toLowerCase();
+        return /\.(mp4|webm|mov|m4v)(\?|$)/.test(u) || u.includes('/videos/');
+    }
+
     function collectPrefetchUrls(data) {
-        const mediaUrls = (data.items || [])
-            .filter(it => (it.type === 'image' || it.type === 'video') && it.content_url)
-            .map(it => absoluteUrl(it.content_url));
+        const mediaItems = (data.items || [])
+            .filter(it => (it.type === 'image' || it.type === 'video') && it.content_url);
+        const videos = [];
+        const images = [];
+        for (const it of mediaItems) {
+            const u = absoluteUrl(it.content_url);
+            if (it.type === 'video' || isVideoMediaUrl(u)) videos.push(u);
+            else images.push(u);
+        }
+        const mediaUrls = videos.concat(images);
         const pluginUrls = (data.items || [])
             .filter(it => (it.type === 'webpage' || it.plugin) && it.content_url
                           && /^\/plugin\//.test(it.content_url))
@@ -814,15 +898,38 @@
         });
     }
 
+    async function ensureNativeMediaReady(url, maxMs = 12_000) {
+        if (!url || !window.AISignXNative) return true;
+        const abs = absoluteUrl(url);
+        try {
+            if (window.AISignXNative.isMediaCached && window.AISignXNative.isMediaCached(abs)) {
+                return true;
+            }
+            if (window.AISignXNative.requestMediaPrefetch) {
+                window.AISignXNative.requestMediaPrefetch(abs);
+            }
+        } catch (_) {
+            return true;
+        }
+        const deadline = Date.now() + maxMs;
+        while (Date.now() < deadline) {
+            try {
+                if (window.AISignXNative.isMediaCached(abs)) return true;
+            } catch (_) { return true; }
+            await new Promise(r => setTimeout(r, 350));
+        }
+        return false;
+    }
+
     function warmPlaylistCaches(data, fromCache = false, urgent = false) {
         if (!data || !data.items || !data.items.length) return;
         const payload = collectPrefetchUrls(data);
         payload.pagePath = window.location.pathname;
 
         if (window._prefetchTimer) clearTimeout(window._prefetchTimer);
-        // Synced walls: warm media sooner so every panel is more likely to
-        // have bytes on disk before a network drop.
-        const delay = (fromCache || urgent) ? 0
+        const nativeShell = (window.AISIGNX_NATIVE_CLIENT === 'android');
+        // Android has no service worker — prefetch aggressively on every playlist.
+        const delay = (fromCache || urgent || nativeShell) ? 0
             : (data.sync && data.sync.enabled ? 2_000 : 5_000);
         window._prefetchTimer = setTimeout(() => {
             window._prefetchTimer = null;
@@ -1267,7 +1374,11 @@
 
         if (item.type === 'image') {
             const img = document.createElement('img');
-            img.src = item.content_url;
+            if (window.AISIGNX_NATIVE_CLIENT === 'android' && isPlaybackOffline()) {
+                div._pendingImageUrl = item.content_url;
+            } else {
+                img.src = item.content_url;
+            }
             img.alt = '';
             img.draggable = false;
             // If the image fails to load (e.g. offline + not cached), skip this slide
@@ -1332,6 +1443,7 @@
                 });
                 if (activeSlide === div) setTimeout(advance, 250);
             };
+            div._failVideo = failVideo;
             vid.controls = false;
             vid.setAttribute('controlsList', 'nodownload noplaybackrate nofullscreen');
             vid.setAttribute('disablepictureinpicture', '');
@@ -1349,7 +1461,12 @@
             vid.playsInline = true;
             vid.loop = false;
             vid.preload = 'auto';
-            vid.src = item.content_url;
+            // Offline Android: do not hit the network until the full file is on disk.
+            if (window.AISIGNX_NATIVE_CLIENT === 'android' && isPlaybackOffline()) {
+                div._pendingVideoUrl = item.content_url;
+            } else {
+                vid.src = item.content_url;
+            }
             div.classList.add('video-pending');
             const markVideoReady = () => div.classList.remove('video-pending');
             vid.addEventListener('loadeddata', () => {
@@ -1378,6 +1495,10 @@
 
             // If the video fails to load (e.g. offline + not cached), skip this slide
             vid.addEventListener('error', () => {
+                if (_serverOffline || _networkState !== 'online') {
+                    failVideo('error event (offline, not cached)');
+                    return;
+                }
                 if (!vid.dataset.urlRefresh) {
                     vid.dataset.urlRefresh = '1';
                     refreshPlaylistUrls().then((ok) => {
@@ -1641,6 +1762,11 @@
                 // Start loading but keep paused — autoplay fires when shown
                 vid.load();
             }
+            if (item.content_url && window.AISignXNative?.requestMediaPrefetch) {
+                try {
+                    window.AISignXNative.requestMediaPrefetch(absoluteUrl(item.content_url));
+                } catch (_) {}
+            }
         }
         // iframes: src is set in buildSlide but the frame is not in the DOM
         // so the browser won't load it yet — that's fine, the goal is to have
@@ -1786,15 +1912,60 @@
                 // Tell any plugin iframe in this slide about current online state
                 notifyIframeOfState(newSlide);
 
+                if (item.type === 'image' && newSlide._pendingImageUrl &&
+                    window.AISIGNX_NATIVE_CLIENT === 'android') {
+                    const img = newSlide.querySelector('img');
+                    const waitMs = isPlaybackOffline() ? 12_000 : 6_000;
+                    ensureNativeMediaReady(newSlide._pendingImageUrl, waitMs).then((ready) => {
+                        if (!ready && isPlaybackOffline()) {
+                            console.warn('[player] image not cached offline:', newSlide._pendingImageUrl);
+                            if (activeSlide === newSlide) setTimeout(advance, 500);
+                            return;
+                        }
+                        if (activeSlide === newSlide && img) {
+                            img.src = newSlide._pendingImageUrl;
+                            newSlide._pendingImageUrl = null;
+                        }
+                    });
+                }
+
                 // Explicitly play video — autoplay on dynamically created elements
                 // is unreliable in Electron/Chromium when not yet attached to DOM.
                 if (item.type === 'video') {
                     const vid = newSlide.querySelector('video');
                     if (vid && !paused) {
-                        vid.play().catch(() => {
-                            // Autoplay blocked — advance to next item
-                            advance();
-                        });
+                        const playVid = () => {
+                            vid.play().catch(() => advance());
+                        };
+                        if (window.AISIGNX_NATIVE_CLIENT === 'android' && item.content_url) {
+                            const waitMs = isPlaybackOffline() ? 25_000 : 10_000;
+                            ensureNativeMediaReady(item.content_url, waitMs).then((ready) => {
+                                if (!ready && isPlaybackOffline()) {
+                                    console.warn('[player] video not cached offline:', item.content_url);
+                                    if (activeSlide === newSlide && typeof newSlide._failVideo === 'function') {
+                                        newSlide._failVideo('not cached offline');
+                                    }
+                                    return;
+                                }
+                                if (activeSlide === newSlide) {
+                                    if (newSlide._pendingVideoUrl) {
+                                        vid.src = newSlide._pendingVideoUrl;
+                                        newSlide._pendingVideoUrl = null;
+                                        vid.load();
+                                    }
+                                    playVid();
+                                }
+                            });
+                        } else if (!offlineCacheLikelyActive() && isPlaybackOffline()) {
+                            console.warn('[player] skipping video — offline cache not active');
+                            if (typeof newSlide._failVideo === 'function') {
+                                newSlide._failVideo('offline cache unavailable');
+                            } else {
+                                setTimeout(advance, 500);
+                            }
+                        } else {
+                            playVid();
+                        }
                     }
                 }
 
@@ -2037,9 +2208,13 @@
         const versionChanged = !!(data.version && data.version !== lastPlaylistVersion);
         if (data.version) lastPlaylistVersion = data.version;
 
-        if (playlistHasExpiredUrls(data)) {
-            fetchPlaylist();
-            return;
+        if (playlistHasExpiredUrls(data) && !isPlaybackOffline()) {
+            if (items.length) {
+                mergeFreshPlaylistUrls(data);
+            } else {
+                fetchPlaylist();
+                return;
+            }
         }
 
         if (!fromCache) savePlaylistCache(data);
@@ -2369,6 +2544,7 @@
         window.SIGNAGE_NETWORK_STATE = state;
         broadcastOnlineState(_serverOffline, state);
         showOfflineBanner(_serverOffline, state);
+        updateOfflineCacheWarning();
         diagLog('net', 'state', 'network state', { state: state, was_offline: wasOffline });
         // Transitioning back online: refresh the server clock offset with
         // a multi-sample calibration. While we were offline both the
@@ -2774,6 +2950,11 @@
         }
 
         connectSSE();
+        updateOfflineCacheWarning();
+        if (navigator.serviceWorker) {
+            navigator.serviceWorker.ready.then(() => updateOfflineCacheWarning()).catch(() => {});
+            navigator.serviceWorker.addEventListener('controllerchange', () => updateOfflineCacheWarning());
+        }
         await ensureReportedAppVersion();
         startPingLoop();
         ping(); // immediate ping to mark online

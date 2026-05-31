@@ -313,6 +313,22 @@
        server-offline   = our flask server unreachable, internet still works
        network-offline  = no internet at all
        (hidden when online) -->
+<div id="cache-warning-banner" data-state="" style="
+    display:none;
+    position:fixed;
+    bottom:0; left:0; right:0;
+    z-index:301;
+    background:rgba(120,20,20,0.92);
+    color:#fff;
+    font:12px/1.35 sans-serif;
+    padding:0.5rem 1rem;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+">
+    <span id="cache-warning-text">Offline caching unavailable.</span>
+</div>
+
 <div id="offline-banner" data-state="" style="
     display:none;
     position:fixed;
@@ -376,8 +392,20 @@
         navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
             .then(reg => {
                 reg.update().catch(() => {});
+                window.__AISIGNX_SW_REGISTERED__ = true;
+                if (reg.active) window.__AISIGNX_SW_CONTROLLER__ = true;
+                reg.addEventListener('updatefound', () => {
+                    const nw = reg.installing;
+                    if (!nw) return;
+                    nw.addEventListener('statechange', () => {
+                        if (nw.state === 'activated') window.__AISIGNX_SW_CONTROLLER__ = true;
+                    });
+                });
             })
-            .catch(err => console.warn('SW registration failed:', err));
+            .catch(err => {
+                window.__AISIGNX_SW_REGISTERED__ = false;
+                console.warn('SW registration failed:', err);
+            });
     }
 </script>
 <script>

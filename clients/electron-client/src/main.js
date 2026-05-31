@@ -137,6 +137,18 @@ function normalizeUpdateMode(mode) {
   return 'prompt';
 }
 
+function normalizeClientServerUrl(raw) {
+  let url = String(raw || '').trim().replace(/\/$/, '');
+  if (!url) return { ok: false, error: 'Server URL is required.' };
+  if (url.toLowerCase().startsWith('http://')) {
+    return { ok: false, error: 'HTTP is not supported. Use https:// (port 443, or your Caddy HTTPS URL).' };
+  }
+  if (!url.toLowerCase().startsWith('https://')) {
+    url = 'https://' + url.replace(/^\/+/, '');
+  }
+  return { ok: true, url };
+}
+
 function effectiveUpdateMode() {
   const cfg = loadConfig();
   if (displayServerAutoUpdate) return 'auto';
@@ -703,8 +715,9 @@ async function applyClientConfig(raw) {
     if (!data || data.format !== 'aisignx-player-config') {
       return { ok: false, error: 'Invalid config format' };
     }
-    const url = String(data.server_url || '').trim().replace(/\/$/, '');
-    if (!url) return { ok: false, error: 'server_url required' };
+    const norm = normalizeClientServerUrl(data.server_url || '');
+    if (!norm.ok) return { ok: false, error: norm.error };
+    const url = norm.url;
     try {
       const ver = await doRequest(`${url}/api/version`);
       if (ver.status !== 200) {
@@ -824,7 +837,9 @@ ipcMain.handle('run-command', async (_, action, payload) => {
 });
 
 ipcMain.handle('save-server-url', async (_, serverUrl) => {
-  const url = serverUrl.trim().replace(/\/$/, '');
+  const norm = normalizeClientServerUrl(serverUrl);
+  if (!norm.ok) return { ok: false, error: norm.error };
+  const url = norm.url;
   try {
     const res = await doRequest(`${url}/api/version`);
     if (res.status !== 200) {
@@ -841,6 +856,9 @@ ipcMain.handle('save-server-url', async (_, serverUrl) => {
 });
 
 ipcMain.handle('register-device', async (_, { serverUrl, friendlyName, enrollmentCode, updateMode }) => {
+  const norm = normalizeClientServerUrl(serverUrl || '');
+  if (!norm.ok) return { ok: false, error: norm.error };
+  serverUrl = norm.url;
   const deviceId = getDeviceId();
   const body = {
     device_id:     deviceId,
